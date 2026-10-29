@@ -67,6 +67,8 @@ course-catalog-db/
     idx_data.sql
     index.sql
     transactions.sql
+  docs/
+    schema.svg
   README.md
 ```
 
@@ -86,6 +88,11 @@ index.sql пересоздаёт таблицы только в idx_demo и от
 основные команды запуска для восстановления исходного состояния.
 
 ## Схема
+
+![Схема связей таблиц](docs/schema.svg)
+
+<details>
+<summary>Исходная диаграмма Mermaid</summary>
 
 ```mermaid
 erDiagram
@@ -111,6 +118,8 @@ erDiagram
         timestamptz enrolled_at
     }
 ```
+
+</details>
 
 Один курс и один студент могут иметь много записей, но каждая запись
 относится ровно к одному курсу и одному студенту. Связь студентов и курсов
