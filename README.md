@@ -37,3 +37,58 @@ Pydantic проверяет вход API и позволяет сразу объ
 
 Счётчики ID могут иметь пропуски: выданное значение не возвращается при ошибке
 или откате. Это не означает потерю строки.
+
+## Индекс и EXPLAIN
+
+База `idx_demo`: 500 курсов, 20 000 студентов, 50 000 записей.
+Запрос: `SELECT * FROM enrollments WHERE student_id = 777;`.
+Измерения получены на PostgreSQL 18.6, Windows, 29 октября 2026 года.
+Сценарий повторения: [experiments/index.sql](experiments/index.sql).
+Он удаляет индекс перед измерением, так как итоговая схема уже содержит его.
+
+### План до индекса
+
+```text
+Seq Scan on enrollments  (cost=0.00..1042.00 rows=3 width=34)
+  Filter: (student_id = 777)
+```
+
+### План после индекса
+
+```text
+Bitmap Heap Scan on enrollments  (cost=4.31..15.59 rows=3 width=34)
+  Recheck Cond: (student_id = 777)
+  ->  Bitmap Index Scan on enrollments_student_id_idx  (cost=0.00..4.31 rows=3 width=0)
+        Index Cond: (student_id = 777)
+```
+
+| Показатель | До индекса | После индекса |
+|---|---|---|
+| Доступ | Seq Scan | Bitmap Heap Scan |
+| cost | 0.0..1042.0 | 4.31..15.59 |
+| Rows Removed by Filter | 49997 | 0, фильтрация всей таблицы не нужна |
+| Execution Time, минимум из 3 | 8.514 ms | 0.082 ms |
+
+Все три замера до: 9.576, 9.114, 8.514 ms; после: 0.228, 0.082, 0.083 ms. Время зависит от компьютера и кэша.
+
+Размер таблицы — 3336 kB, дополнительного индекса — 896 kB. Индекс занимает место и требует обслуживания при INSERT, DELETE и изменении student_id.
+
+Поиск по email:
+
+```text
+Index Scan using students_email_key on students  (cost=0.29..8.30 rows=1 width=45)
+  Index Cond: (email = 'student777@example.com'::text)
+```
+
+Поиск по course_id:
+
+```text
+Bitmap Heap Scan on enrollments  (cost=5.19..241.01 rows=100 width=34)
+  Recheck Cond: (course_id = 'course-7'::text)
+  ->  Bitmap Index Scan on enrollments_course_id_student_id_key  (cost=0.00..5.17 rows=100 width=0)
+        Index Cond: (course_id = 'course-7'::text)
+```
+
+1. PRIMARY KEY и UNIQUE автоматически создают индексы; FOREIGN KEY на ссылающейся стороне — нет. Для email индекс появился из UNIQUE, для course_id используется первый столбец UNIQUE (course_id, student_id). Для поиска только по student_id в данном эксперименте выбран Seq Scan: составной индекс не дал выгодного плана. В PostgreSQL 18 возможен skip scan по последующим столбцам, но его выбор зависит от статистики и стоимости.
+2. Шесть курсов помещаются на одной странице: прочитать её дешевле, чем обращаться к индексу и затем к таблице. На 50 000 строк отдельный индекс позволяет получить только нужные записи.
+3. Индекс student_id ускоряет выборку записей одного студента и поиск дочерних строк при каскадном удалении студента.
